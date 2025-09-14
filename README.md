@@ -55,7 +55,7 @@ binary_sensor.vlag_halfstok_today
 
 ## 🛠 Troubleshooting
 
-1. Requires Home Assistant 2024.0.0 or newer (see hacs.json)
+1. Requires Home Assistant 2025.7.0 or newer (see hacs.json)
 2. If scraping fails, the last cached data will be used
 
 ## 📜 Credits
