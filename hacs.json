@@ -1,0 +1,6 @@
+{
+  "name": "Vlaginstructie Nederland",
+  "render_readme": true,
+  "domains": ["vlaginstructie"],
+  "homeassistant": "2025.7.0"
+}
