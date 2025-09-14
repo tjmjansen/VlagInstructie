@@ -1,0 +1,9 @@
+{
+  "domain": "vlaginstructie",
+  "name": "Vlaginstructie Nederland",
+  "version": "1.0.0",
+  "documentation": "https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie",
+  "requirements": ["beautifulsoup4", "requests"],
+  "codeowners": ["@tjmjansen"],
+  "iot_class": "cloud_polling"
+}
