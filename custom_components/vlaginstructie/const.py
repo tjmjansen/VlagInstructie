@@ -1,3 +1,5 @@
+DOMAIN = "vlaginstructie"
+
 from datetime import date, timedelta
 
 def get_variable_days(year: int):
