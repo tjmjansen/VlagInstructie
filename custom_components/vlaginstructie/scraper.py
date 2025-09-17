@@ -1,119 +1,251 @@
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
+from datetime import date, datetime, timedelta
+import calendar
 import re
-import json
-from datetime import datetime, date
-import os
+import logging
 
-URL = "https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie"
+_LOGGER = logging.getLogger(__name__)
 
+URL = (
+    "https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/"
+    "vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie"
+)
+
+_cache = {"vlagdagen": {}, "last_update": None}
+
+# Dutch month name -> month number
 MONTHS = {
     "januari": 1, "februari": 2, "maart": 3, "april": 4,
     "mei": 5, "juni": 6, "juli": 7, "augustus": 8,
     "september": 9, "oktober": 10, "november": 11, "december": 12
 }
 
-CACHE_FILENAME = "vlagdagen_cache.json"
+
+# ---------- Easter algorithm & christian-holidays ----------
+def easter_date(year: int) -> date:
+    """Return Easter Sunday date for given Gregorian year (Meeus/Jones algorithm)."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
 
 
-def parse_date(text: str) -> str | None:
-    """Converteer Nederlandse datumstring (bv. '27 april') naar 'dd-mm'."""
-    text = re.sub(r"\(.*?\)", "", text)  # verwijder dingen tussen haakjes
-    text = text.strip().lower()
-    match = re.search(r"(\d{1,2}) (\w+)", text)
-    if match:
-        dag = int(match.group(1))
-        maand_naam = match.group(2)
-        maand = MONTHS.get(maand_naam)
-        if maand:
-            return f"{dag:02d}-{maand:02d}"
-    return None
+def is_christian_holiday(d: date) -> bool:
+    """Return True for commonly recognized Christian holidays used in NL context."""
+    year = d.year
+    easter = easter_date(year)
+    good_friday = easter - timedelta(days=2)
+    easter_monday = easter + timedelta(days=1)
+    ascension = easter + timedelta(days=39)
+    pentecost = easter + timedelta(days=49)  # Pinksteren (Sunday)
+    pentecost_monday = easter + timedelta(days=50)
+    christmas_1 = date(year, 12, 25)
+    christmas_2 = date(year, 12, 26)
+
+    holidays = {good_friday, easter, easter_monday, ascension, pentecost, pentecost_monday, christmas_1, christmas_2}
+    return d in holidays
 
 
-def fetch_vlagdagen_no_cache() -> dict:
-    """Haal vlagdagen direct van rijksoverheid.nl."""
-    resp = requests.get(URL, timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+# ---------- helpers to parse date strings ----------
+def parse_date_string(raw: str):
+    """
+    Parse a raw date string and return tuple (day, month, year_or_None, had_year_bool).
+    Supports formats:
+      - "04-05-2025"
+      - "04-05"
+      - "4 mei 2025"
+      - "4 mei"
+    Returns (day:int, month:int, year:int|None, had_year:bool) or (None, None, None, False).
+    """
+    raw = raw.strip().lower()
+    # direct numeric with dashes: dd-mm-yyyy or dd-mm
+    m = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", raw)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3)), True
+    m = re.match(r"^(\d{1,2})[-/](\d{1,2})$", raw)
+    if m:
+        return int(m.group(1)), int(m.group(2)), None, False
 
-    vlagdagen = {}
+    # textual month (Dutch)
+    m = re.match(r"^(\d{1,2})\s+([a-zé]+)\s+(\d{4})$", raw)
+    if m:
+        day = int(m.group(1))
+        month_name = m.group(2)
+        month = MONTHS.get(month_name)
+        if month:
+            return day, month, int(m.group(3)), True
 
-    # Zoek naar de kop "Vaste dagen waarop wordt gevlagd"
-    header = None
-    for h in soup.find_all(["h2", "h3", "h4"]):
-        if "Vaste dagen waarop wordt gevlagd" in h.get_text():
-            header = h
-            break
+    m = re.match(r"^(\d{1,2})\s+([a-zé]+)$", raw)
+    if m:
+        day = int(m.group(1))
+        month = MONTHS.get(m.group(2))
+        if month:
+            return day, month, None, False
 
-    if not header:
-        list_items = soup.select("ul li")
-    else:
-        ul = header.find_next_sibling("ul")
-        list_items = ul.find_all("li") if ul else []
-
-    for li in list_items:
-        text = li.get_text(" ", strip=True)
-        parts = re.split(r"[:–-]", text, maxsplit=1)
-        if len(parts) < 2:
-            continue
-
-        datum_str = parts[0].strip()
-        omschrijving = parts[1].strip()
-        key = parse_date(datum_str)
-        if not key:
-            continue
-
-        daginfo = {
-            "name": omschrijving,
-            "halfstok": "halfstok" in text.lower(),
-            "wimpel": "wimpel" in text.lower(),
-            "scope": "alle"
-        }
-
-        if "enkele gebouwen" in text.lower():
-            daginfo["scope"] = "enkele"
-
-        vlagdagen[key] = daginfo
-
-    return vlagdagen
+    return None, None, None, False
 
 
-def write_cache(cache_data: dict):
-    data = {
-        "fetched_date": date.today().isoformat(),
-        "vlagdagen": cache_data
+# ---------- variable days ----------
+def last_weekday_of_month(year, month, weekday: int):
+    """Last weekday (0=Mon) of month."""
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    offset = (last_day.weekday() - weekday) % 7
+    return last_day - timedelta(days=offset)
+
+
+def nth_weekday_of_month(year, month, weekday: int, n: int):
+    """Nth weekday (0=Mon) of month."""
+    first_day = date(year, month, 1)
+    first_weekday = first_day.weekday()
+    delta_days = (weekday - first_weekday + 7) % 7 + (n - 1) * 7
+    return first_day + timedelta(days=delta_days)
+
+
+def get_variable_days_for_year(year: int):
+    """Return mapping of ISO-dates to info for variable days of the given year."""
+    v = {}
+
+    # Veteranendag = last Saturday of June
+    vet = last_weekday_of_month(year, 6, 5)  # 5 = Saturday
+    v[vet.isoformat()] = {
+        "name": "Veteranendag",
+        "halfstok": False,
+        "wimpel": False,
+        "scope": "all",
     }
-    path = os.path.join(os.path.dirname(__file__), CACHE_FILENAME)
+
+    # Prinsjesdag = third Tuesday of September
+    prins = nth_weekday_of_month(year, 9, 1, 3)  # 1 = Tuesday
+    v[prins.isoformat()] = {
+        "name": "Prinsjesdag",
+        "halfstok": False,
+        "wimpel": False,
+        "scope": "all",
+    }
+
+    return v
+
+
+# ---------- main fetcher ----------
+async def fetch_vlagdagen():
+    """
+    Return dict keyed by ISO dates 'YYYY-MM-DD' -> info.
+    Caches per day to avoid excessive requests.
+    """
+    global _cache
+    today = date.today()
+    if _cache["last_update"] == today and _cache["vlagdagen"]:
+        _LOGGER.debug("fetch_vlagdagen - returning cached %d items", len(_cache["vlagdagen"]))
+        return _cache["vlagdagen"]
+
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except Exception:
-        pass
+        async with aiohttp.ClientSession() as session:
+            async with session.get(URL) as resp:
+                html = await resp.text()
+    except Exception as e:
+        _LOGGER.warning("fetch_vlagdagen - fetch failed: %s, returning cache (%d items)", e, len(_cache["vlagdagen"]))
+        return _cache["vlagdagen"]
 
+    soup = BeautifulSoup(html, "html.parser")
 
-def read_cache() -> dict | None:
-    path = os.path.join(os.path.dirname(__file__), CACHE_FILENAME)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        fetched = data.get("fetched_date")
-        if fetched and datetime.fromisoformat(fetched).date() == date.today():
-            return data.get("vlagdagen")
-    except Exception:
-        return None
-    return None
+    table = soup.find("table")
+    result = {}
 
+    if table:
+        rows = table.find_all("tr")
+        for row in rows[1:]:
+            cols = row.find_all("td")
+            if len(cols) < 2:
+                continue
 
-def get_vlagdagen() -> dict:
-    """Gebruik cache (1x per dag), anders fetch opnieuw."""
-    vlagdagen = read_cache()
-    if vlagdagen is not None:
-        return vlagdagen
-    try:
-        vlagdagen = fetch_vlagdagen_no_cache()
-        write_cache(vlagdagen)
-        return vlagdagen
-    except Exception:
-        return {}
+            raw_date_cell = cols[0].get_text(" ", strip=True)
+            reason = cols[1].get_text(" ", strip=True)
+
+            # split main and optional parenthetical alternative
+            pm = re.match(r"^(.*?)\s*\((.*?)\)\s*$", raw_date_cell)
+            if pm:
+                main_raw = pm.group(1).strip()
+                alt_raw = pm.group(2).strip()
+            else:
+                main_raw = raw_date_cell.strip()
+                alt_raw = None
+
+            # parse main once to see if it contains a year
+            main_day, main_month, main_year, main_has_year = parse_date_string(main_raw)
+            alt_day = alt_month = alt_year = None
+            alt_has_year = False
+            if alt_raw:
+                alt_day, alt_month, alt_year, alt_has_year = parse_date_string(alt_raw)
+
+            # determine which years to create entries for
+            years = []
+            if main_has_year:
+                years = [main_year]
+            else:
+                years = [today.year, today.year + 1]
+
+            for y in years:
+                # build main_date for this year (if parsing succeeded)
+                if main_day is None or main_month is None:
+                    continue
+                main_dt = date(y, main_month, main_day)
+
+                # determine alt_dt if provided
+                alt_dt = None
+                if alt_raw and (alt_day is not None and alt_month is not None):
+                    if alt_has_year:
+                        alt_dt = date(alt_year, alt_month, alt_day)
+                    else:
+                        alt_dt = date(y, alt_month, alt_day)
+
+                # apply "use parentheses only if main falls on Sunday or Christian holiday"
+                use_dt = main_dt
+                if alt_dt:
+                    if main_dt.weekday() == 6 or is_christian_holiday(main_dt):
+                        use_dt = alt_dt
+                        _LOGGER.debug(
+                            "Row '%s' reason '%s': main %s is Sunday/holiday -> using alt %s for year %d",
+                            raw_date_cell, reason, main_dt.isoformat(), alt_dt.isoformat(), y
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Row '%s' reason '%s': main %s is valid -> using main for year %d",
+                            raw_date_cell, reason, main_dt.isoformat(), y
+                        )
+                else:
+                    # no alt specified -> use main (no automatic shift)
+                    _LOGGER.debug(
+                        "Row '%s' reason '%s': no alt -> using main %s for year %d",
+                        raw_date_cell, reason, main_dt.isoformat(), y
+                    )
+
+                # final key and info
+                key = use_dt.isoformat()
+                result[key] = {
+                    "name": reason,
+                    "halfstok": "dodenherdenking" in reason.lower(),
+                    "wimpel": "koning" in reason.lower() or "koningsdag" in reason.lower() or "wimpel" in reason.lower(),
+                    "scope": "all",
+                }
+
+    # add variable days for this and next year
+    result.update(get_variable_days_for_year(today.year))
+    result.update(get_variable_days_for_year(today.year + 1))
+
+    # cache and return
+    _cache["vlagdagen"] = result
+    _cache["last_update"] = today
+    _LOGGER.debug("fetch_vlagdagen - parsed %d iso-date entries", len(result))
+    return result
