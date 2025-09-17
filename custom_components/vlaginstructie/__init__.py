@@ -9,8 +9,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
     """Set up is not used because this integration uses config flow."""
     return True
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_setup_entry(hass, entry):
     """Set up VlagInstructie from a config entry."""
-    # registreer de sensors
-    await sensor.async_setup_entry(hass, entry, hass.async_add_entities)
+    # registreer de sensors via hass.data en hass.helpers.entity_platform
+    hass.helpers.discovery.load_platform('sensor', 'vlaginstructie', {}, entry.data)
     return True

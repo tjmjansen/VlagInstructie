@@ -5,8 +5,8 @@ from .scraper import get_vlagdagen
 from .const import get_variable_days
 
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up Vlaginstructie sensors from a config entry."""
+async def async_setup_entry(hass, entry, async_add_entities):
+    """Set up sensors from a config entry."""
     async_add_entities([
         VlagInstructieTodaySensor(),
         VlagInstructieTomorrowSensor(),
