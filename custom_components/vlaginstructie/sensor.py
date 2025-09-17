@@ -1,19 +1,134 @@
-"""Sensors for Vlaginstructie: today, tomorrow and next flag day.
-
-NextFlagDaySensor now scans day-by-day (0..365) and picks the first match.
-Extensive debug logging has been added to help understand the selection.
-"""
+"""Sensors for Vlaginstructie using ISO-date keys from scraper."""
 
 import logging
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from homeassistant.components.sensor import SensorEntity
 
 from .scraper import fetch_vlagdagen
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class VlagInstructieBaseSensor(SensorEntity):
+    def __init__(self, name: str, unique_id: str):
+        self._name = name
+        self._unique_id = unique_id
+        self._state = None
+        self._attributes = {}
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def unique_id(self):
+        return self._unique_id
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        return self._attributes
+
+
+class VlagInstructieTodaySensor(VlagInstructieBaseSensor):
+    def __init__(self):
+        super().__init__("vlaginstructie_today", "vlaginstructie_sensor_today")
+
+    async def async_update(self):
+        vlagdagen = await fetch_vlagdagen()
+        _LOGGER.debug("TodaySensor - fetched %d items", len(vlagdagen))
+        today_iso = date.today().isoformat()
+        info = vlagdagen.get(today_iso)
+        if info:
+            self._state = info.get("name")
+            self._attributes = {
+                "reason": info.get("name"),
+                "date": today_iso,
+                "scope": info.get("scope"),
+                "wimpel": info.get("wimpel"),
+                "halfstok": info.get("halfstok"),
+            }
+            _LOGGER.debug("TodaySensor - match %s -> %s", today_iso, self._attributes)
+        else:
+            self._state = "No flag instruction"
+            self._attributes = {"date": today_iso}
+            _LOGGER.debug("TodaySensor - no match for %s", today_iso)
+
+
+class VlagInstructieTomorrowSensor(VlagInstructieBaseSensor):
+    def __init__(self):
+        super().__init__("vlaginstructie_tomorrow", "vlaginstructie_sensor_tomorrow")
+
+    async def async_update(self):
+        vlagdagen = await fetch_vlagdagen()
+        tomorrow_iso = (date.today() + timedelta(days=1)).isoformat()
+        info = vlagdagen.get(tomorrow_iso)
+        if info:
+            self._state = info.get("name")
+            self._attributes = {
+                "reason": info.get("name"),
+                "date": tomorrow_iso,
+                "scope": info.get("scope"),
+                "wimpel": info.get("wimpel"),
+                "halfstok": info.get("halfstok"),
+            }
+            _LOGGER.debug("TomorrowSensor - match %s -> %s", tomorrow_iso, self._attributes)
+        else:
+            self._state = "No flag instruction"
+            self._attributes = {"date": tomorrow_iso}
+            _LOGGER.debug("TomorrowSensor - no match for %s", tomorrow_iso)
+
+
+class NextFlagDaySensor(VlagInstructieBaseSensor):
+    def __init__(self):
+        super().__init__("next_flag_day", "vlaginstructie_sensor_next_flag_day")
+
+    async def async_update(self):
+        vlagdagen = await fetch_vlagdagen()
+        _LOGGER.debug("NextFlagDaySensor - fetched %d items", len(vlagdagen))
+
+        # Build a list of date objects from the ISO keys
+        parsed = []
+        for iso_key, info in vlagdagen.items():
+            try:
+                d = datetime.strptime(iso_key, "%Y-%m-%d").date()
+                parsed.append((d, info))
+            except Exception:
+                _LOGGER.debug("NextFlagDaySensor - skipping invalid key: %s", iso_key)
+
+        if not parsed:
+            self._state = "No upcoming flag day"
+            self._attributes = {}
+            _LOGGER.warning("NextFlagDaySensor - no parsed dates available")
+            return
+
+        today = date.today()
+        # Filter future and sort chronologically
+        future = [(d, info) for d, info in parsed if d >= today]
+        future.sort(key=lambda x: x[0])
+
+        _LOGGER.debug("NextFlagDaySensor - %d future entries after %s", len(future), today.isoformat())
+        if not future:
+            self._state = "No upcoming flag day"
+            self._attributes = {}
+            return
+
+        next_d, next_info = future[0]
+        self._state = next_d.isoformat()
+        self._attributes = {
+            "reason": next_info.get("name"),
+            "date": next_d.isoformat(),
+            "scope": next_info.get("scope"),
+            "wimpel": next_info.get("wimpel"),
+            "halfstok": next_info.get("halfstok"),
+        }
+        _LOGGER.debug("NextFlagDaySensor - selected next %s -> %s", next_d.isoformat(), self._attributes)
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up vlaginstructie sensors via config entry."""
     async_add_entities(
         [
             VlagInstructieTodaySensor(),
@@ -22,177 +137,3 @@ async def async_setup_entry(hass, entry, async_add_entities):
         ],
         update_before_add=True,
     )
-
-class VlagInstructieTodaySensor(SensorEntity):
-    """Sensor showing today's flag instruction."""
-
-    def __init__(self):
-        self._name = "vlaginstructie_today"
-        self._unique_id = "vlaginstructie_sensor_today"
-        self._state = None
-        self._attributes = {}
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def unique_id(self):
-        return self._unique_id
-
-    @property
-    def state(self):
-        return self._state
-
-    @property
-    def extra_state_attributes(self):
-        return self._attributes
-
-    async def async_update(self):
-        """Async update: fetch vlagdagen and set today's state."""
-        vlagdagen = await fetch_vlagdagen()
-        _LOGGER.debug("TodaySensor - fetched %d vlagdagen: %s", len(vlagdagen), sorted(vlagdagen.keys()))
-        today = date.today()
-        key = today.strftime("%d-%m")
-        dag = vlagdagen.get(key)
-
-        if dag:
-            self._state = dag.get("name")
-            self._attributes = {
-                "reason": dag.get("name"),
-                "date": today.isoformat(),
-                "scope": dag.get("scope"),
-                "wimpel": dag.get("wimpel"),
-                "halfstok": dag.get("halfstok"),
-            }
-            _LOGGER.debug("TodaySensor - match for key %s -> %s", key, self._attributes)
-        else:
-            self._state = "No flag instruction"
-            self._attributes = {"date": today.isoformat()}
-            _LOGGER.debug("TodaySensor - no match for today (%s)", key)
-
-
-class VlagInstructieTomorrowSensor(SensorEntity):
-    """Sensor showing tomorrow's flag instruction."""
-
-    def __init__(self):
-        self._name = "vlaginstructie_tomorrow"
-        self._unique_id = "vlaginstructie_sensor_tomorrow"
-        self._state = None
-        self._attributes = {}
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def unique_id(self):
-        return self._unique_id
-
-    @property
-    def state(self):
-        return self._state
-
-    @property
-    def extra_state_attributes(self):
-        return self._attributes
-
-    async def async_update(self):
-        """Async update: fetch vlagdagen and set tomorrow's state."""
-        vlagdagen = await fetch_vlagdagen()
-        _LOGGER.debug("TomorrowSensor - fetched %d vlagdagen: %s", len(vlagdagen), sorted(vlagdagen.keys()))
-        tomorrow = date.today() + timedelta(days=1)
-        key = tomorrow.strftime("%d-%m")
-        dag = vlagdagen.get(key)
-
-        if dag:
-            self._state = dag.get("name")
-            self._attributes = {
-                "reason": dag.get("name"),
-                "date": tomorrow.isoformat(),
-                "scope": dag.get("scope"),
-                "wimpel": dag.get("wimpel"),
-                "halfstok": dag.get("halfstok"),
-            }
-            _LOGGER.debug("TomorrowSensor - match for key %s -> %s", key, self._attributes)
-        else:
-            self._state = "No flag instruction"
-            self._attributes = {"date": tomorrow.isoformat()}
-            _LOGGER.debug("TomorrowSensor - no match for tomorrow (%s)", key)
-
-
-class NextFlagDaySensor(SensorEntity):
-    """Sensor showing the next upcoming flag day.
-
-    This sensor scans day-by-day from today up to 365 days ahead and picks the
-    first day that matches a key in the vlagdagen dict. This avoids problems
-    with ambiguous dd-mm keys and incorrect sorting.
-    """
-
-    def __init__(self):
-        self._name = "next_flag_day"
-        self._unique_id = "vlaginstructie_sensor_next_flag_day"
-        self._state = None
-        self._attributes = {}
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def unique_id(self):
-        return self._unique_id
-
-    @property
-    def state(self):
-        return self._state
-
-    @property
-    def extra_state_attributes(self):
-        return self._attributes
-
-    async def async_update(self):
-        """Async update: find and set the next flag day."""
-        vlagdagen = await fetch_vlagdagen()
-        _LOGGER.debug("NextFlagDaySensor - fetched %d vlagdagen: %s", len(vlagdagen), sorted(vlagdagen.keys()))
-
-        if not vlagdagen:
-            _LOGGER.warning("NextFlagDaySensor - no vlagdagen available (empty dict).")
-            self._state = "No upcoming flag day"
-            self._attributes = {}
-            return
-
-        today = date.today()
-        found = False
-        scanned_days = 0
-
-        # Scan up to 365 days ahead for the first matching dd-mm
-        for delta in range(0, 366):
-            candidate = today + timedelta(days=delta)
-            key = candidate.strftime("%d-%m")
-            scanned_days += 1
-            info = vlagdagen.get(key)
-            if info:
-                # found the next flag day
-                _LOGGER.debug(
-                    "NextFlagDaySensor - found candidate on attempt %d: %s (key=%s) -> %s",
-                    delta + 1, candidate.isoformat(), key, info
-                )
-                self._state = info.get("name")
-                self._attributes = {
-                    "reason": info.get("name"),
-                    "date": candidate.isoformat(),
-                    "scope": info.get("scope"),
-                    "wimpel": info.get("wimpel"),
-                    "halfstok": info.get("halfstok"),
-                }
-                found = True
-                break
-            else:
-                # debug trace optional but helpful when troubleshooting
-                _LOGGER.debug("NextFlagDaySensor - no match for %s (key=%s)", candidate.isoformat(), key)
-
-        if not found:
-            _LOGGER.warning("NextFlagDaySensor - scanned %d days, no upcoming flag day found.", scanned_days)
-            self._state = "No upcoming flag day"
-            self._attributes = {}
