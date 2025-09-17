@@ -6,6 +6,7 @@
   "documentation": "https://github.com/tjmjansen/VlagInstructie",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/tjmjansen/VlagInstructie/issues",
+  "platforms": ["sensor", "binary_sensor"],
   "requirements": ["beautifulsoup4", "requests"],
-  "version": "1.0.0"
+  "version": "1.1.4"
 }

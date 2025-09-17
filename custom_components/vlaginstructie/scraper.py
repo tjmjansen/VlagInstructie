@@ -1,119 +1,110 @@
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
-import re
-import json
-from datetime import datetime, date
-import os
+from datetime import date, datetime, timedelta
+import calendar
+import holidays
 
 URL = "https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie"
 
-MONTHS = {
-    "januari": 1, "februari": 2, "maart": 3, "april": 4,
-    "mei": 5, "juni": 6, "juli": 7, "augustus": 8,
-    "september": 9, "oktober": 10, "november": 11, "december": 12
+# Cache voor max 1 fetch per dag
+_cache = {
+    "vlagdagen": {},
+    "last_update": None
 }
 
-CACHE_FILENAME = "vlagdagen_cache.json"
+# Nederlandse christelijke feestdagen
+nl_holidays = holidays.NL()
 
+# --- Helper functies voor variabele datums ---
+def last_weekday_of_month(year, month, weekday):
+    """Return the last weekday (0=maandag) of a given month."""
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    offset = (last_day.weekday() - weekday) % 7
+    return last_day - timedelta(days=offset)
 
-def parse_date(text: str) -> str | None:
-    """Converteer Nederlandse datumstring (bv. '27 april') naar 'dd-mm'."""
-    text = re.sub(r"\(.*?\)", "", text)  # verwijder dingen tussen haakjes
-    text = text.strip().lower()
-    match = re.search(r"(\d{1,2}) (\w+)", text)
-    if match:
-        dag = int(match.group(1))
-        maand_naam = match.group(2)
-        maand = MONTHS.get(maand_naam)
-        if maand:
-            return f"{dag:02d}-{maand:02d}"
-    return None
+def nth_weekday_of_month(year, month, weekday, n):
+    """Return the nth weekday (0=maandag) of a given month."""
+    first_day = date(year, month, 1)
+    first_weekday = first_day.weekday()
+    delta_days = (weekday - first_weekday + 7) % 7 + (n-1)*7
+    return first_day + timedelta(days=delta_days)
 
+def adjust_for_sunday_or_holiday(d):
+    """If the date falls on Sunday or a recognized holiday, adjust it."""
+    if d.weekday() == 6 or d in nl_holidays:
+        # Voor nu: verplaats naar volgende maandag
+        return d + timedelta(days=(7 - d.weekday()))
+    return d
 
-def fetch_vlagdagen_no_cache() -> dict:
-    """Haal vlagdagen direct van rijksoverheid.nl."""
-    resp = requests.get(URL, timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-
+# --- Variabele dagen ---
+def get_variable_days(year):
     vlagdagen = {}
 
-    # Zoek naar de kop "Vaste dagen waarop wordt gevlagd"
-    header = None
-    for h in soup.find_all(["h2", "h3", "h4"]):
-        if "Vaste dagen waarop wordt gevlagd" in h.get_text():
-            header = h
-            break
+    # Laatste zaterdag in juni
+    last_saturday_june = last_weekday_of_month(year, 6, 5)
+    last_saturday_june = adjust_for_sunday_or_holiday(last_saturday_june)
+    vlagdagen[last_saturday_june.strftime("%d-%m")] = {
+        "name": "Laatste zaterdag juni",
+        "halfstok": False,
+        "wimpel": True,
+        "scope": "all"
+    }
 
-    if not header:
-        list_items = soup.select("ul li")
-    else:
-        ul = header.find_next_sibling("ul")
-        list_items = ul.find_all("li") if ul else []
-
-    for li in list_items:
-        text = li.get_text(" ", strip=True)
-        parts = re.split(r"[:–-]", text, maxsplit=1)
-        if len(parts) < 2:
-            continue
-
-        datum_str = parts[0].strip()
-        omschrijving = parts[1].strip()
-        key = parse_date(datum_str)
-        if not key:
-            continue
-
-        daginfo = {
-            "name": omschrijving,
-            "halfstok": "halfstok" in text.lower(),
-            "wimpel": "wimpel" in text.lower(),
-            "scope": "alle"
-        }
-
-        if "enkele gebouwen" in text.lower():
-            daginfo["scope"] = "enkele"
-
-        vlagdagen[key] = daginfo
+    # Derde dinsdag in september
+    third_tuesday_sep = nth_weekday_of_month(year, 9, 1, 3)
+    third_tuesday_sep = adjust_for_sunday_or_holiday(third_tuesday_sep)
+    vlagdagen[third_tuesday_sep.strftime("%d-%m")] = {
+        "name": "Derde dinsdag september",
+        "halfstok": False,
+        "wimpel": True,
+        "scope": "all"
+    }
 
     return vlagdagen
 
+# --- Live scraping ---
+async def fetch_vlagdagen():
+    """Fetch vlagdagen from rijksoverheid.nl with caching (once per day)."""
+    global _cache
+    today = date.today()
+    if _cache["last_update"] == today and _cache["vlagdagen"]:
+        return _cache["vlagdagen"]
 
-def write_cache(cache_data: dict):
-    data = {
-        "fetched_date": date.today().isoformat(),
-        "vlagdagen": cache_data
-    }
-    path = os.path.join(os.path.dirname(__file__), CACHE_FILENAME)
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(URL) as resp:
+                html = await resp.text()
     except Exception:
-        pass
+        # fallback naar cache bij fetch failure
+        return _cache["vlagdagen"]
 
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.find("table")
+    vlagdagen = {}
+    if table:
+        for row in table.find_all("tr")[1:]:  # skip header
+            cols = row.find_all("td")
+            if len(cols) >= 2:
+                datum_str = cols[0].text.strip()
+                reason = cols[1].text.strip()
+                try:
+                    # Datum parsing
+                    day = datetime.strptime(datum_str, "%d-%m-%Y").date()
+                    day = adjust_for_sunday_or_holiday(day)
+                    vlagdagen[day.strftime("%d-%m")] = {
+                        "name": reason,
+                        "halfstok": "Dodenherdenking" in reason or False,
+                        "wimpel": "Koningsdag" in reason or False,
+                        "scope": "all"
+                    }
+                except ValueError:
+                    continue
 
-def read_cache() -> dict | None:
-    path = os.path.join(os.path.dirname(__file__), CACHE_FILENAME)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        fetched = data.get("fetched_date")
-        if fetched and datetime.fromisoformat(fetched).date() == date.today():
-            return data.get("vlagdagen")
-    except Exception:
-        return None
-    return None
+    # Voeg variabele dagen toe
+    vlagdagen.update(get_variable_days(today.year))
+    vlagdagen.update(get_variable_days(today.year + 1))  # ook volgend jaar
 
-
-def get_vlagdagen() -> dict:
-    """Gebruik cache (1x per dag), anders fetch opnieuw."""
-    vlagdagen = read_cache()
-    if vlagdagen is not None:
-        return vlagdagen
-    try:
-        vlagdagen = fetch_vlagdagen_no_cache()
-        write_cache(vlagdagen)
-        return vlagdagen
-    except Exception:
-        return {}
+    # Update cache
+    _cache["vlagdagen"] = vlagdagen
+    _cache["last_update"] = today
+    return vlagdagen
