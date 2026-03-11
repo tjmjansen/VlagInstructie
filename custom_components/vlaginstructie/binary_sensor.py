@@ -23,7 +23,6 @@ class VlagUithangenToday(BinarySensorEntity):
 
     @property
     def is_on(self):
-        today = date.today()
         info = self._info
         if not info:
             return False
@@ -63,6 +62,49 @@ class VlagHalfstokToday(BinarySensorEntity):
         self._info = _get_info_for_day(date.today(), vlagdagen)
 
 
+
+
+class OranjeWimpelToday(BinarySensorEntity):
+    @property
+    def name(self):
+        return "oranje_wimpel_today"
+
+    @property
+    def unique_id(self):
+        return "vlaginstructie_binary_oranje_wimpel_today"
+
+    @property
+    def is_on(self):
+        if not self._info:
+            return False
+        return self._info.get("wimpel", False)
+
+    async def async_update(self):
+        vlagdagen = await fetch_vlagdagen()
+        self._info = _get_info_for_day(date.today(), vlagdagen)
+
+
+class OranjeWimpelTomorrow(BinarySensorEntity):
+    @property
+    def name(self):
+        return "oranje_wimpel_tomorrow"
+
+    @property
+    def unique_id(self):
+        return "vlaginstructie_binary_oranje_wimpel_tomorrow"
+
+    @property
+    def is_on(self):
+        if not self._info:
+            return False
+        return self._info.get("wimpel", False)
+
+    async def async_update(self):
+        vlagdagen = await fetch_vlagdagen()
+        tomorrow = date.today() + timedelta(days=1)
+        self._info = _get_info_for_day(tomorrow, vlagdagen)
+
+
 class VlagUithangenTomorrow(BinarySensorEntity):
     @property
     def name(self):
@@ -93,7 +135,6 @@ class VlagHalfstokTomorrow(BinarySensorEntity):
 
     @property
     def is_on(self):
-        tomorrow = date.today() + timedelta(days=1)
         if not self._info:
             return False
 
@@ -113,6 +154,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
             VlagHalfstokToday(),
             VlagUithangenTomorrow(),
             VlagHalfstokTomorrow(),
+            OranjeWimpelToday(),
+            OranjeWimpelTomorrow(),
         ],
         update_before_add=True,
     )

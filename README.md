@@ -17,6 +17,8 @@ It tells you exactly when to raise the Dutch flag, whether it should be flown at
     - `binary_sensor.vlag_halfstok_today`
     - `binary_sensor.vlag_uithangen_tomorrow`
     - `binary_sensor.vlag_halfstok_tomorrow`
+    - `binary_sensor.oranje_wimpel_today`
+    - `binary_sensor.oranje_wimpel_tomorrow`
 - ✅ Automatically calculates **variable days** (Veterans Day, Prinsjesdag)
 - ✅ Scrapes and caches the official government flag instruction page
 
@@ -73,8 +75,12 @@ Each of these sensors has the following attributes:
 - `binary_sensor.vlag_halfstok_today`
 - `binary_sensor.vlag_uithangen_tomorrow`
 - `binary_sensor.vlag_halfstok_tomorrow`
+- `binary_sensor.oranje_wimpel_today`
+- `binary_sensor.oranje_wimpel_tomorrow`
 
 > These are **simple on/off sensors** without extra attributes.
+
+`oranje_wimpel_*` is `on` on days where the official instruction includes an orange pennant (`wimpel = true`), such as Koningsdag and the birthdays of Queen Máxima, Princess Beatrix and the Princess of Orange.
 
 ---
 

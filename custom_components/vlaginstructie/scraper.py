@@ -142,12 +142,21 @@ def get_variable_days_for_year(year: int):
 async def fetch_vlagdagen():
     """
     Return dict keyed by ISO dates 'YYYY-MM-DD' -> info.
-    Caches per day to avoid excessive requests.
+    Only fetches remote data on the first day of the month (or when cache is empty).
     """
     global _cache
     today = date.today()
+    should_fetch = not _cache["vlagdagen"] or today.day == 1
+    if not should_fetch:
+        _LOGGER.debug(
+            "fetch_vlagdagen - skipping remote fetch (day=%d), returning cached %d items",
+            today.day,
+            len(_cache["vlagdagen"]),
+        )
+        return _cache["vlagdagen"]
+
     if _cache["last_update"] == today and _cache["vlagdagen"]:
-        _LOGGER.debug("fetch_vlagdagen - returning cached %d items", len(_cache["vlagdagen"]))
+        _LOGGER.debug("fetch_vlagdagen - already fetched today, returning cached %d items", len(_cache["vlagdagen"]))
         return _cache["vlagdagen"]
 
     try:
