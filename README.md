@@ -143,3 +143,6 @@ The binary sensors automatically follow this rule.
 
 ## 📜 Credits
 Data: Government of the Netherlands
+
+## 🎨 Branding assets
+This repository includes local HACS branding assets (`icon.png` and `logo.png`) for installations where a dedicated Home Assistant brands entry is not available.
