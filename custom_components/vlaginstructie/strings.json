@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vlaginstructie Nederland",
+        "description": "Set up Dutch flag instruction sensors."
+      }
+    },
+    "abort": {
+      "already_configured": "Vlaginstructie Nederland is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vlaginstructie Nederland",
+        "description": "There are no options to configure."
+      }
+    }
+  }
+}
