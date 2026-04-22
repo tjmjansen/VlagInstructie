@@ -11,6 +11,7 @@ URL = (
     "https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/"
     "vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie"
 )
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
 _cache = {"vlagdagen": {}, "last_update": None}
 
@@ -79,7 +80,7 @@ def parse_date_string(raw: str):
         return int(m.group(1)), int(m.group(2)), None, False
 
     # textual month (Dutch)
-    m = re.match(r"^(\d{1,2})\s+([a-zé]+)\s+(\d{4})$", raw)
+    m = re.match(r"^(\d{1,2})\s+([^\W\d_]+)\s+(\d{4})$", raw)
     if m:
         day = int(m.group(1))
         month_name = m.group(2)
@@ -87,7 +88,7 @@ def parse_date_string(raw: str):
         if month:
             return day, month, int(m.group(3)), True
 
-    m = re.match(r"^(\d{1,2})\s+([a-zé]+)$", raw)
+    m = re.match(r"^(\d{1,2})\s+([^\W\d_]+)$", raw)
     if m:
         day = int(m.group(1))
         month = MONTHS.get(m.group(2))
@@ -160,11 +161,16 @@ async def fetch_vlagdagen():
         return _cache["vlagdagen"]
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
             async with session.get(URL) as resp:
+                resp.raise_for_status()
                 html = await resp.text()
-    except Exception as e:
-        _LOGGER.warning("fetch_vlagdagen - fetch failed: %s, returning cache (%d items)", e, len(_cache["vlagdagen"]))
+    except (aiohttp.ClientError, TimeoutError) as e:
+        _LOGGER.warning(
+            "fetch_vlagdagen - fetch failed: %s, returning cache (%d items)",
+            e,
+            len(_cache["vlagdagen"]),
+        )
         return _cache["vlagdagen"]
 
     soup = BeautifulSoup(html, "html.parser")
@@ -172,82 +178,71 @@ async def fetch_vlagdagen():
     table = soup.find("table")
     result = {}
 
-    if table:
-        rows = table.find_all("tr")
-        for row in rows[1:]:
-            cols = row.find_all("td")
-            if len(cols) < 2:
+    if not table:
+        _LOGGER.warning(
+            "fetch_vlagdagen - no table found, returning cache (%d items)",
+            len(_cache["vlagdagen"]),
+        )
+        return _cache["vlagdagen"]
+
+    rows = table.find_all("tr")
+    for row in rows[1:]:
+        cols = row.find_all("td")
+        if len(cols) < 2:
+            continue
+
+        raw_date_cell = cols[0].get_text(" ", strip=True)
+        reason = cols[1].get_text(" ", strip=True)
+
+        pm = re.match(r"^(.*?)\s*\((.*?)\)\s*$", raw_date_cell)
+        if pm:
+            main_raw = pm.group(1).strip()
+            alt_raw = pm.group(2).strip()
+        else:
+            main_raw = raw_date_cell.strip()
+            alt_raw = None
+
+        main_day, main_month, main_year, main_has_year = parse_date_string(main_raw)
+        alt_day = alt_month = alt_year = None
+        alt_has_year = False
+        if alt_raw:
+            alt_day, alt_month, alt_year, alt_has_year = parse_date_string(alt_raw)
+
+        years = [main_year] if main_has_year else [today.year, today.year + 1]
+
+        for y in years:
+            if main_day is None or main_month is None:
+                _LOGGER.debug("Skipping unparseable date cell: %s", raw_date_cell)
                 continue
 
-            raw_date_cell = cols[0].get_text(" ", strip=True)
-            reason = cols[1].get_text(" ", strip=True)
-
-            # split main and optional parenthetical alternative
-            pm = re.match(r"^(.*?)\s*\((.*?)\)\s*$", raw_date_cell)
-            if pm:
-                main_raw = pm.group(1).strip()
-                alt_raw = pm.group(2).strip()
-            else:
-                main_raw = raw_date_cell.strip()
-                alt_raw = None
-
-            # parse main once to see if it contains a year
-            main_day, main_month, main_year, main_has_year = parse_date_string(main_raw)
-            alt_day = alt_month = alt_year = None
-            alt_has_year = False
-            if alt_raw:
-                alt_day, alt_month, alt_year, alt_has_year = parse_date_string(alt_raw)
-
-            # determine which years to create entries for
-            years = []
-            if main_has_year:
-                years = [main_year]
-            else:
-                years = [today.year, today.year + 1]
-
-            for y in years:
-                # build main_date for this year (if parsing succeeded)
-                if main_day is None or main_month is None:
-                    continue
+            try:
                 main_dt = date(y, main_month, main_day)
+            except ValueError as e:
+                _LOGGER.debug("Skipping invalid date cell '%s': %s", raw_date_cell, e)
+                continue
 
-                # determine alt_dt if provided
-                alt_dt = None
-                if alt_raw and (alt_day is not None and alt_month is not None):
-                    if alt_has_year:
-                        alt_dt = date(alt_year, alt_month, alt_day)
-                    else:
-                        alt_dt = date(y, alt_month, alt_day)
+            alt_dt = None
+            if alt_raw and (alt_day is not None and alt_month is not None):
+                try:
+                    alt_dt = date(alt_year if alt_has_year else y, alt_month, alt_day)
+                except ValueError as e:
+                    _LOGGER.debug("Ignoring invalid alternative date '%s': %s", alt_raw, e)
 
-                # apply "use parentheses only if main falls on Sunday or Christian holiday"
-                use_dt = main_dt
-                if alt_dt:
-                    if main_dt.weekday() == 6 or is_christian_holiday(main_dt):
-                        use_dt = alt_dt
-                        _LOGGER.debug(
-                            "Row '%s' reason '%s': main %s is Sunday/holiday -> using alt %s for year %d",
-                            raw_date_cell, reason, main_dt.isoformat(), alt_dt.isoformat(), y
-                        )
-                    else:
-                        _LOGGER.debug(
-                            "Row '%s' reason '%s': main %s is valid -> using main for year %d",
-                            raw_date_cell, reason, main_dt.isoformat(), y
-                        )
-                else:
-                    # no alt specified -> use main (no automatic shift)
-                    _LOGGER.debug(
-                        "Row '%s' reason '%s': no alt -> using main %s for year %d",
-                        raw_date_cell, reason, main_dt.isoformat(), y
-                    )
+            use_dt = main_dt
+            if alt_dt and (main_dt.weekday() == 6 or is_christian_holiday(main_dt)):
+                use_dt = alt_dt
+                _LOGGER.debug(
+                    "Row '%s' reason '%s': main %s is Sunday/holiday -> using alt %s for year %d",
+                    raw_date_cell, reason, main_dt.isoformat(), alt_dt.isoformat(), y
+                )
 
-                # final key and info
-                key = use_dt.isoformat()
-                result[key] = {
-                    "name": reason,
-                    "halfstok": "dodenherdenking" in reason.lower(),
-                    "wimpel": "koning" in reason.lower() or "koningsdag" in reason.lower() or "wimpel" in reason.lower(),
-                    "scope": "all",
-                }
+            key = use_dt.isoformat()
+            result[key] = {
+                "name": reason,
+                "halfstok": "dodenherdenking" in reason.lower(),
+                "wimpel": "koning" in reason.lower() or "koningsdag" in reason.lower() or "wimpel" in reason.lower(),
+                "scope": "all",
+            }
 
     # add variable days for this and next year
     result.update(get_variable_days_for_year(today.year))

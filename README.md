@@ -1,76 +1,73 @@
-# 🇳🇱 Dutch Flag Instruction (Vlaginstructie Nederland)
+# Dutch Flag Instruction (Vlaginstructie Nederland)
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/use/custom_repositories/)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/use/custom_repositories/)
 
-A Home Assistant integration that automatically fetches the official **Dutch flag instruction** from the [Government of the Netherlands](https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie).  
-It tells you exactly when to raise the Dutch flag, whether it should be flown at half-mast, and when to use the orange pennant.
+A Home Assistant integration that fetches the official Dutch flag instruction from the [Government of the Netherlands](https://www.rijksoverheid.nl/onderwerpen/grondwet-en-statuut/vraag-en-antwoord/wanneer-kan-ik-de-vlag-uithangen-en-wat-is-de-vlaginstructie).
 
----
+It tells you when to raise the Dutch flag, whether it should be flown at half-mast, and when to use the orange pennant.
 
-## ✨ Features
+## Features
 
-- ✅ **Today's flag instruction** (`sensor.vlaginstructie_today`)
-- ✅ **Tomorrow's flag instruction** (`sensor.vlaginstructie_tomorrow`)
-- ✅ **Next upcoming flag day** (`sensor.next_flag_day`)
-- ✅ Binary sensors for today and tomorrow:
-    - `binary_sensor.vlag_uithangen_today`
-    - `binary_sensor.vlag_halfstok_today`
-    - `binary_sensor.vlag_uithangen_tomorrow`
-    - `binary_sensor.vlag_halfstok_tomorrow`
-    - `binary_sensor.oranje_wimpel_today`
-    - `binary_sensor.oranje_wimpel_tomorrow`
-- ✅ Automatically calculates **variable days** (Veterans Day, Prinsjesdag)
-- ✅ Scrapes and caches the official government flag instruction page
+- Today's flag instruction: `sensor.vlaginstructie_today`
+- Tomorrow's flag instruction: `sensor.vlaginstructie_tomorrow`
+- Next upcoming flag day: `sensor.next_flag_day`
+- Binary sensors for today and tomorrow:
+  - `binary_sensor.vlag_uithangen_today`
+  - `binary_sensor.vlag_halfstok_today`
+  - `binary_sensor.vlag_uithangen_tomorrow`
+  - `binary_sensor.vlag_halfstok_tomorrow`
+  - `binary_sensor.oranje_wimpel_today`
+  - `binary_sensor.oranje_wimpel_tomorrow`
+- Automatically calculates variable days such as Veteranendag and Prinsjesdag
+- Caches the official government flag instruction page
 
----
+## Installation
 
-## 📦 Installation
+### HACS custom repository
 
-### Via HACS (Custom Repository)
-1. Open HACS in Home Assistant
-2. Go to **Integrations**
-3. Click **⋮ → Custom repositories**
-4. Add this repository as an integration
-5. Search for **Dutch Flag Instruction** in HACS and install
+1. Open HACS in Home Assistant.
+2. Go to **Integrations**.
+3. Open **Custom repositories**.
+4. Add this repository as an integration.
+5. Search for **Vlaginstructie Nederland** and install it.
 
 ### Manual installation
-1. Download this repository as a ZIP
-2. Copy the folder `custom_components/vlaginstructie/` into your Home Assistant `custom_components/` directory
-3. Restart Home Assistant
 
----
+1. Download this repository as a ZIP.
+2. Copy `custom_components/vlaginstructie/` into your Home Assistant `custom_components/` directory.
+3. Restart Home Assistant.
 
-## ⚙️ Configuration
+## Configuration
 
-This integration is **Config Flow-based** → you can add it via the Home Assistant UI:
+This integration uses the Home Assistant UI.
 
-1. Go to **Settings → Devices & Services**
-2. Click **Add Integration**
-3. Search for **Dutch Flag Instruction**
-4. Done ✅
+1. Go to **Settings > Devices & services**.
+2. Select **Add integration**.
+3. Search for **Vlaginstructie Nederland**.
+4. Finish the setup flow.
 
-No `configuration.yaml` is needed.
+No `configuration.yaml` setup is needed.
 
----
-
-## 📊 Entities
+## Entities
 
 ### Sensors
-- `sensor.vlaginstructie_today` → today's flag instruction
-- `sensor.vlaginstructie_tomorrow` → tomorrow's flag instruction
-- `sensor.next_flag_day` → the name and date of the next flag day
 
-Each of these sensors has the following attributes:
+- `sensor.vlaginstructie_today`
+- `sensor.vlaginstructie_tomorrow`
+- `sensor.next_flag_day`
+
+Each sensor exposes these attributes when a flag instruction exists:
 
 | Attribute | Description |
-|-----------|-------------|
-| `reason`  | The occasion/holiday (e.g., *Dodenherdenking*, *Bevrijdingsdag*) |
-| `date`    | The ISO date of the flag instruction |
-| `scope`   | Whether the instruction is nationwide or specific |
-| `wimpel`  | `true` if the orange pennant should be used |
-| `halfstok`| `true` if the flag should be flown at half-mast |
+| --- | --- |
+| `reason` | The occasion, for example `Dodenherdenking` or `Koningsdag` |
+| `date` | The ISO date of the flag instruction |
+| `scope` | Whether the instruction is nationwide or specific |
+| `wimpel` | `true` if the orange pennant should be used |
+| `halfstok` | `true` if the flag should be flown at half-mast |
 
-### Binary Sensors
+### Binary sensors
+
 - `binary_sensor.vlag_uithangen_today`
 - `binary_sensor.vlag_halfstok_today`
 - `binary_sensor.vlag_uithangen_tomorrow`
@@ -78,18 +75,15 @@ Each of these sensors has the following attributes:
 - `binary_sensor.oranje_wimpel_today`
 - `binary_sensor.oranje_wimpel_tomorrow`
 
-> These are **simple on/off sensors** without extra attributes.
+The `oranje_wimpel_*` sensors are `on` on days where the official instruction includes an orange pennant, such as Koningsdag and birthdays of members of the Royal House.
 
-`oranje_wimpel_*` is `on` on days where the official instruction includes an orange pennant (`wimpel = true`), such as Koningsdag and the birthdays of Queen Máxima, Princess Beatrix and the Princess of Orange.
+## Lovelace example
 
----
+### Markdown card
 
-## 📊 Lovelace Example
-
-### Markdown Card Example
 ```yaml
 type: markdown
-title: 🇳🇱 Flag Instruction
+title: Vlaginstructie
 content: |
   **Today ({{ states('sensor.vlaginstructie_today') }})**
   - Reason: {{ state_attr('sensor.vlaginstructie_today', 'reason') }}
@@ -110,36 +104,30 @@ content: |
   - With pennant: {{ state_attr('sensor.next_flag_day', 'wimpel') }}
 ```
 
-### Entities Card Example
+### Entities card
+
 ```yaml
 type: entities
-title: 🇳🇱 Flag Instruction
+title: Vlaginstructie
 entities:
-- entity: sensor.vlaginstructie_today
-  name: Today
-  secondary_info: >-
-  {{ state_attr('sensor.vlaginstructie_today', 'reason') }}
-- entity: sensor.vlaginstructie_tomorrow
-  name: Tomorrow
-  secondary_info: >-
-  {{ state_attr('sensor.vlaginstructie_tomorrow', 'reason') }}
-- entity: sensor.next_flag_day
-  name: Next Flag Day
-  secondary_info: >-
-  {{ state_attr('sensor.next_flag_day', 'reason') }}
+  - entity: sensor.vlaginstructie_today
+    name: Today
+  - entity: sensor.vlaginstructie_tomorrow
+    name: Tomorrow
+  - entity: sensor.next_flag_day
+    name: Next flag day
 ```
 
-## 📜 Special rules
-- On 4 May (Remembrance Day):
-  - Flag is half-mast until 18:00
-  - From 18:00 onwards → raised to full mast
+## Special rules
 
-The binary sensors automatically follow this rule.
+On 4 May (Dodenherdenking), the flag is flown at half-mast until 18:00. After 18:00, the half-mast binary sensor turns off.
 
-## 🛠 Troubleshooting
+## Troubleshooting
 
-1. Requires Home Assistant 2025.7.0 or newer (see hacs.json)
-2. If scraping fails, the last cached data will be used
+- Requires Home Assistant 2025.7.0 or newer.
+- If fetching the government page fails, the last cached data is used.
+- If the government page structure changes, the integration logs a warning and keeps using cached data when available.
 
-## 📜 Credits
-Data: Government of the Netherlands
+## Credits
+
+Data source: Government of the Netherlands.
